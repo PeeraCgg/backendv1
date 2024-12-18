@@ -1,6 +1,10 @@
 import express from 'express';
 import bcrypt from 'bcrypt';
 import { PrismaClient } from '@prisma/client';
+import { generateQRCode } from '../utils/qrCodeGenerator.js'
+
+
+
 const prisma = new PrismaClient();
 const router = express.Router();
 
@@ -33,40 +37,58 @@ export const adminLogin =async (req, res) => {
 export const allUsers = async (req, res) => {
   try {
     const users = await prisma.prv_Users.findMany({
-      include: {
-        privileges: true, // ดึงข้อมูล privileges ที่เกี่ยวข้อง
+      select: {
+        id: true,
+        firstname: true,
+        lastname: true,
+        mobile: true, // Select the mobile number
+        privileges: {
+          select: {
+            prvType: true, // Privilege level/type
+          },
+        },
       },
     });
-    res.status(200).json(users);
+
+    // Format the data to include fullname and mobile
+    const formattedUsers = users.map((user) => ({
+      id: user.id,
+      fullname: `${user.firstname || ""} ${user.lastname || ""}`.trim(), // Concatenate firstname and lastname
+      mobile: user.mobile || "N/A", // Provide fallback if mobile is not available
+      privilegeLevel: user.privileges[0]?.prvType || "No Privilege", // Fallback if no privilege
+    }));
+
+    res.status(200).json({
+      message: "Users retrieved successfully!",
+      users: formattedUsers,
+    });
   } catch (error) {
     console.error("Error fetching users:", error);
     res.status(500).json({ message: "Failed to fetch users" });
   }
 };
 
+
 export const purchaseLicense = async (req, res) => {
-  const { userId } = req.body;
-
-  if (!userId) {
-    return res.status(400).json({ error: "กรุณาระบุ userId" });
-  }
-
   try {
-    // แปลง userId เป็น Integer
-    const userIdInt = parseInt(userId, 10); // ฐาน 10
+    const userId = parseInt(req.params.userId, 10); // Get and parse `userId` from params
 
-    // ตรวจสอบว่าผู้ใช้มีอยู่ในระบบจริงหรือไม่
-    const userExists = await prisma.prv_Users.findUnique({
-      where: { id: userIdInt },
+    if (!userId || isNaN(userId)) {
+      return res.status(400).json({ error: "Invalid or missing user ID" });
+    }
+
+    // Check if the user exists
+    const user = await prisma.prv_Users.findUnique({
+      where: { id: userId },
     });
 
-    if (!userExists) {
+    if (!user) {
       return res.status(404).json({ error: "ไม่พบข้อมูลผู้ใช้งานในระบบ" });
     }
 
-    // ตรวจสอบ Privilege
+    // Check if privilege exists for the user
     const privilege = await prisma.prv_Privilege.findFirst({
-      where: { userId: userIdInt },
+      where: { userId },
     });
 
     if (!privilege) {
@@ -75,30 +97,20 @@ export const purchaseLicense = async (req, res) => {
         .json({ error: "ไม่พบ Privilege สำหรับผู้ใช้งานนี้" });
     }
 
-    // ตรวจสอบว่าผู้ใช้งานมี License อยู่แล้วหรือไม่
-    if (privilege.prvLicenseId) {
+    // Check if the user already purchased the license
+    if (privilege.isPurchased) {
       return res.status(400).json({ error: "ผู้ใช้ได้ซื้อ License ไปแล้ว" });
     }
 
-    // ดึงรหัส License ล่าสุด
-    const lastLicense = await prisma.prv_Privilege.aggregate({
-      _max: { prvLicenseId: true },
-    });
-
-    const nextLicenseId =
-      lastLicense._max.prvLicenseId !== null
-        ? lastLicense._max.prvLicenseId + 1
-        : 1;
-
-    // อัปเดตข้อมูล Privilege
+    // Update `isPurchased` and `prvType` in `Prv_Privilege`
     const updatedPrivilege = await prisma.prv_Privilege.update({
-      where: { id: privilege.id },
+      where: { id: privilege.id }, // Use the privilege ID
       data: {
-        prvLicenseId: nextLicenseId,
-        prvType: "Diamond",
+        isPurchased: true,
+        prvType: "Privilege", // Set to Privilege type
         prvExpiredDate: new Date(
           new Date().setFullYear(new Date().getFullYear() + 1)
-        ),
+        ), // Set expiration date to 1 year from now
       },
     });
 
@@ -106,8 +118,8 @@ export const purchaseLicense = async (req, res) => {
       message: "ซื้อ License สำเร็จ",
       data: {
         userId,
-        prvLicenseId: nextLicenseId,
-        licenseType: "Diamond",
+        prvType: updatedPrivilege.prvType,
+        isPurchased: updatedPrivilege.isPurchased,
         prvExpiredDate: updatedPrivilege.prvExpiredDate,
       },
     });
@@ -117,44 +129,74 @@ export const purchaseLicense = async (req, res) => {
   }
 };
 
+
+
 export const showExpense = async (req, res) => {
-    const { userId } = req.params; // ดึง userId จาก URL
-  
-    if (!userId) {
-      return res.status(400).json({ error: 'User ID is required' });
+  try {
+    const userId = parseInt(req.params.userId, 10);
+    if (!userId || isNaN(userId)) {
+      return res.status(400).json({ error: "Invalid User ID" });
     }
-  
-    try {
-      // ตรวจสอบว่า user มี privilege หรือไม่
-      const privilege = await prisma.prv_Privilege.findFirst({
-        where: { userId: parseInt(userId, 10) }, // แปลง userId เป็น Int
-      });
-  
-      if (!privilege) {
-        return res.status(404).json({ error: 'Privilege not found for this user.' });
-      }
-  
-      // ดึงประวัติการใช้จ่าย
-      const expenses = await prisma.prv_Total_Expense.findMany({
-        where: { userId: parseInt(userId, 10) },
-        orderBy: { transactionDate: 'desc' }, // เรียงลำดับจากวันที่ล่าสุดไปยังเก่าสุด
-      });
-  
-      res.status(200).json({
-        message: 'Expense history retrieved successfully',
+
+    // Fetch privilege details
+    const privilege = await prisma.prv_Privilege.findFirst({
+      where: { userId },
+      select: {
+        prvType: true,
+        prvExpiredDate: true,
+        currentAmount: true,
+        totalAmountPerYear: true,
+        currentPoint: true,
+        prvLicenseId: true,
+      },
+    });
+
+    if (!privilege) {
+      return res.status(404).json({ error: "Privilege not found for this user." });
+    }
+
+    // Fetch expense history
+    const expenses = await prisma.prv_Total_Expense.findMany({
+      where: { userId },
+      orderBy: { transactionDate: "desc" },
+      select: {
+        id: true,
+        expenseAmount: true,
+        transactionDate: true,
+        prvType: true,
+        expensePoint: true,
+      },
+    });
+
+    // Check for no expenses
+    if (expenses.length === 0) {
+      return res.status(200).json({
+        message: "No expenses found for this user",
         data: {
           totalAmountPerYear: privilege.totalAmountPerYear,
           prvType: privilege.prvType,
-          expenses,
+          expenses: [],
         },
       });
-    } catch (error) {
-      console.error('Error retrieving expense history:', error);
-      res.status(500).json({ error: 'Internal server error' });
     }
-  };
+
+    res.status(200).json({
+      message: "Expense history retrieved successfully",
+      data: {
+        totalAmountPerYear: privilege.totalAmountPerYear,
+        prvType: privilege.prvType,
+        currentPoint: privilege.currentPoint,
+        expenses,
+      },
+    });
+  } catch (error) {
+    console.error("Error retrieving expense history:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
   
-export const addExpense = async (req, res) => {
+  export const addExpense = async (req, res) => {
     try {
       const expenseAmount = parseFloat(req.body.expenseAmount); // Ensure numeric input
       const transactionDate = req.body.transactionDate;
@@ -178,28 +220,28 @@ export const addExpense = async (req, res) => {
   
       // Update privilege type
       let updatedPrvType = privilege.prvType;
-      if (privilege.prvType !== 'Diamond') {
-        if (updatedTotalAmountPerYear < 50000) {
-          updatedPrvType = 'Silver';
-        } else if (updatedTotalAmountPerYear < 100000) {
+      if (privilege.prvType !== 'Privilege') {
+        if (updatedTotalAmountPerYear < 100000) {
           updatedPrvType = 'Gold';
-        } else {
+        } else if (updatedTotalAmountPerYear < 150000) {
           updatedPrvType = 'Platinum';
-        }
-      }
-  
-      // Handle Diamond type expiration
-      if (privilege.prvType === 'Diamond' && privilege.prvExpiredDate) {
-        const now = new Date();
-        const oneYearLater = new Date(privilege.prvExpiredDate);
-        if (now <= oneYearLater) {
+        } else {
           updatedPrvType = 'Diamond';
         }
       }
   
+      // Handle Privilege type expiration
+      if (privilege.prvType === 'Privilege' && privilege.prvExpiredDate) {
+        const now = new Date();
+        const oneYearLater = new Date(privilege.prvExpiredDate);
+        if (now <= oneYearLater) {
+          updatedPrvType = 'Privilege';
+        }
+      }
+  
       // Calculate new points based on updated privilege type
-      const pointRates = { Diamond: 80, Platinum: 100, Gold: 130, Silver: 150 };
-      const rate = pointRates[updatedPrvType] || pointRates['Silver'];
+      const pointRates = { Privilege: 120, Diamond: 160, Platinum: 180, Gold: 200 };
+      const rate = pointRates[updatedPrvType] || pointRates['Gold'];
       const totalAmount = privilege.currentAmount + expenseAmount;
       const pointsEarned = Math.floor(totalAmount / rate);
       const remainingAmount = totalAmount % rate;
@@ -236,6 +278,7 @@ export const addExpense = async (req, res) => {
       res.status(500).json({ error: 'Internal server error' });
     }
   };
+  
   
 export const deleteExpenseWithTransaction = async (req, res) => {
     try {
@@ -284,15 +327,15 @@ export const deleteExpenseWithTransaction = async (req, res) => {
       res.status(500).json({ error: 'Internal server error' });
     }
   };
-export const deleteExpense = async (req, res) => {
-    const { expenseId } = req.params; // ดึง expenseId จาก URL
+  export const deleteExpense = async (req, res) => {
+    const { expenseId } = req.params; // Get expenseId from URL
   
     if (!expenseId) {
       return res.status(400).json({ error: 'Expense ID is required' });
     }
   
     try {
-      // ตรวจสอบว่ามีค่าใช้จ่ายในระบบหรือไม่
+      // Check if the expense exists
       const expense = await prisma.prv_Total_Expense.findUnique({
         where: { id: parseInt(expenseId, 10) },
       });
@@ -301,31 +344,97 @@ export const deleteExpense = async (req, res) => {
         return res.status(404).json({ error: 'Expense not found.' });
       }
   
-      // ลบค่าใช้จ่าย
+      const userId = expense.userId;
+  
+      // Fetch the user's privilege
+      const privilege = await prisma.prv_Privilege.findFirst({
+        where: { userId },
+      });
+  
+      if (!privilege) {
+        return res.status(404).json({ error: 'Privilege not found for this user.' });
+      }
+  
+      // Calculate updated values
+      const updatedTotalAmountPerYear = privilege.totalAmountPerYear - expense.expenseAmount;
+      const updatedCurrentPoint = privilege.currentPoint - expense.expensePoint;
+  
+      // Determine the new privilege type
+      let updatedPrvType = privilege.prvType;
+  
+      if (privilege.prvType !== 'Privilege') {
+        if (updatedTotalAmountPerYear < 100000) {
+          updatedPrvType = 'Gold';
+        } else if (updatedTotalAmountPerYear < 150000) {
+          updatedPrvType = 'Platinum';
+        } else {
+          updatedPrvType = 'Diamond';
+        }
+      }
+  
+      // Handle Privilege type expiration
+      if (privilege.prvType === 'Privilege' && privilege.prvExpiredDate) {
+        const now = new Date();
+        const oneYearLater = new Date(privilege.prvExpiredDate);
+        if (now <= oneYearLater) {
+          updatedPrvType = 'Privilege';
+        }
+      }
+  
+      // Delete the expense
       await prisma.prv_Total_Expense.delete({
         where: { id: parseInt(expenseId, 10) },
       });
   
-      res.status(200).json({ message: 'Expense deleted successfully' });
+      // Update the privilege
+      const updatedPrivilege = await prisma.prv_Privilege.update({
+        where: { id: privilege.id },
+        data: {
+          totalAmountPerYear: updatedTotalAmountPerYear >= 0 ? updatedTotalAmountPerYear : 0,
+          currentPoint: updatedCurrentPoint >= 0 ? updatedCurrentPoint : 0,
+          prvType: updatedPrvType,
+        },
+      });
+  
+      res.status(200).json({
+        message: 'Expense deleted successfully and privilege updated',
+        updatedPrivilege,
+      });
     } catch (error) {
       console.error('Error deleting expense:', error);
       res.status(500).json({ error: 'Internal server error' });
     }
   };
-export const getAllProducts = async (req, res) => {
+  
+  export const getAllProducts = async (req, res) => {
     try {
-      const products = await prisma.prv_Product.findMany({
-        orderBy: { point: 'desc' }, // Order by points descending
+      const products = await prisma.product.findMany({
+        include: {
+          ProductStock: {
+            include: {
+              color: true,
+              size: true,
+            },
+          },
+        },
+        orderBy: { point: 'desc' },
       });
+  
+      if (products.length === 0) {
+        return res.status(404).json({ success: false, message: "No products found" });
+      }
   
       res.status(200).json({ success: true, products });
     } catch (error) {
-      console.error('Error fetching products:', error);
-      res.status(500).json({ success: false, error: 'Failed to fetch products' });
+      console.error("Error fetching products:", error);
+      res.status(500).json({ success: false, error: "Failed to fetch products" });
     }
   };
   
-  export const addProducts = async (req, res) => {
+  
+  
+  
+export const addProducts = async (req, res) => {
     try {
       const { products } = req.body;
   
@@ -333,42 +442,135 @@ export const getAllProducts = async (req, res) => {
         return res.status(400).json({ error: 'Products must be an array.' });
       }
   
-      // Fetch all existing product IDs
-      const existingProducts = await prisma.prv_Product.findMany({
-        select: { id: true },
-      });
+      const createdProducts = [];
   
-      const existingIds = new Set(existingProducts.map((p) => p.id));
+      for (const product of products) {
+        const { name, description, point, imagepath, combinations } = product;
   
-      // Find the smallest available ID for missing entries
-      let nextAvailableId = 1;
-      const productsWithId = products.map((product) => {
-        while (existingIds.has(nextAvailableId)) {
-          nextAvailableId++;
+        if (!name || !description || !point || !Array.isArray(combinations)) {
+          throw new Error(
+            'Each product must have a name, description, point, and combinations (array).'
+          );
         }
-        const productWithId = { ...product, id: nextAvailableId };
-        existingIds.add(nextAvailableId); // Mark ID as used
-        nextAvailableId++;
-        return productWithId;
-      });
   
-      // Insert products into the database
-      const createdProducts = await prisma.prv_Product.createMany({
-        data: productsWithId,
-        skipDuplicates: true, // Skip duplicates based on unique fields
-      });
+        // Check if the product already exists
+        const existingProduct = await prisma.product.findFirst({
+          where: { name }, // ค้นหาตามชื่อ (ไม่ต้องเป็น unique)
+        });
+  
+        let createdProduct;
+        if (existingProduct) {
+          console.log(`Product "${name}" already exists. Skipping creation.`);
+          createdProduct = existingProduct;
+        } else {
+          // Step 1: Create the product
+          createdProduct = await prisma.product.create({
+            data: {
+              name,
+              description,
+              point,
+              imagepath,
+            },
+          });
+        }
+  
+        const productId = createdProduct.id;
+  
+        // Step 2: Handle combinations (color, size, stock)
+        const createdCombinations = [];
+        for (const combination of combinations) {
+          const { color, size, barcode, quantity } = combination;
+  
+          if (!color || !size || !barcode || !quantity) {
+            throw new Error(
+              'Each combination must have a color, size, barcode, and quantity.'
+            );
+          }
+  
+          // Ensure the color exists in ProductType
+          const colorOption = await prisma.productType.upsert({
+            where: { type: color }, // ต้องมี @unique ใน `type`
+            create: {
+              type: color,
+              description: `${color} color option`,
+            },
+            update: {},
+          });
+  
+          // Ensure the size exists in ProductType
+          const sizeOption = await prisma.productType.upsert({
+            where: { type: size }, // ต้องมี @unique ใน `type`
+            create: {
+              type: size,
+              description: `${size} size option`,
+            },
+            update: {},
+          });
+  
+          // Check if the stock combination already exists
+          const existingStock = await prisma.productStock.findFirst({
+            where: {
+              productId,
+              colorId: colorOption.id,
+              sizeId: sizeOption.id,
+            },
+          });
+  
+          if (existingStock) {
+            console.log(
+              `Stock for "${name}" (${color} - ${size}) already exists. Skipping creation.`
+            );
+            createdCombinations.push(existingStock);
+            continue;
+          }
+  
+          // Generate QR Code for stock
+          const qrCodeData = {
+            barcode,
+            name: `${name} (${color} - ${size})`,
+            productId,
+            color,
+            size,
+          };
+  
+          const stockQrCode = await generateQRCode(qrCodeData); // Generate QR Code
+  
+          // Create the stock entry for this combination
+          const createdStock = await prisma.productStock.create({
+            data: {
+              itemCode: `${name}-${color}-${size}`, // Example item code
+              name: `${name} (${color} - ${size})`,
+              description: `Stock for ${name} with color ${color} and size ${size}`,
+              colorId: colorOption.id,
+              sizeId: sizeOption.id,
+              barcode,
+              stockQrCode,
+              productId,
+              quantity,
+            },
+          });
+  
+          createdCombinations.push(createdStock);
+        }
+  
+        createdProducts.push({
+          product: createdProduct,
+          combinations: createdCombinations,
+        });
+      }
   
       res.status(201).json({
         message: 'Products added successfully!',
-        createdCount: createdProducts.count,
+        createdProducts,
       });
     } catch (error) {
       console.error('Error adding products:', error);
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(500).json({ error: error.message || 'Internal server error' });
     }
   };
   
-export const deleteProduct = async (req, res) => {
+
+  export const deleteProduct = async (req, res) => {
     try {
       const { id } = req.params;
   
@@ -376,18 +578,29 @@ export const deleteProduct = async (req, res) => {
         return res.status(400).json({ error: 'Product ID is required.' });
       }
   
-      // ตรวจสอบว่าสินค้ามีอยู่หรือไม่
-      const existingProduct = await prisma.prv_Product.findUnique({
-        where: { id: parseInt(id) },
+      // Check if the product exists
+      const existingProduct = await prisma.product.findUnique({
+        where: { id: parseInt(id, 10) },
       });
   
       if (!existingProduct) {
         return res.status(404).json({ error: 'Product not found.' });
       }
   
-      // ลบสินค้า
-      await prisma.prv_Product.delete({
-        where: { id: parseInt(id) },
+      // Check if the product has been redeemed
+      const redemptionExists = await prisma.prv_History.findFirst({
+        where: { productId: parseInt(id, 10) },
+      });
+  
+      if (redemptionExists) {
+        return res.status(400).json({
+          error: 'Cannot delete product. This product has been redeemed by a customer.',
+        });
+      }
+  
+      // Delete the product
+      await prisma.product.delete({
+        where: { id: parseInt(id, 10) },
       });
   
       res.status(200).json({
@@ -400,9 +613,227 @@ export const deleteProduct = async (req, res) => {
     }
   };
   
-  
-  
-  
+
+
+ // ตรวจสอบ qrcode
+  export const approveRedemption = async (req, res) => {
+  try {
+    const { qrCode } = req.body;
+
+    // Validate required parameters
+    if (!qrCode) {
+      return res.status(400).json({ error: 'QR Code is required.' });
+    }
+
+    // Fetch QR Code data
+    const qrCodeRecord = await prisma.prv_QRCode.findFirst({
+      where: { code: qrCode, status: 'active' },
+      include: {
+        history: true, // Include associated history
+      },
+    });
+
+    if (!qrCodeRecord) {
+      return res.status(404).json({ error: 'QR Code not found or already used.' });
+    }
+
+    // Check if QR Code is expired
+    if (new Date() > new Date(qrCodeRecord.expiresAt)) {
+      return res.status(400).json({ error: 'QR Code has expired.' });
+    }
+
+    // Fetch the associated history record
+    const historyRecord = await prisma.prv_History.findFirst({
+      where: { qrCodeId: qrCodeRecord.id },
+    });
+
+    if (!historyRecord) {
+      return res.status(404).json({ error: 'Associated history not found.' });
+    }
+
+    // Update QR Code status to 'used'
+    await prisma.prv_QRCode.update({
+      where: { id: qrCodeRecord.id },
+      data: { status: 'used' },
+    });
+
+    // Update history status to 'approved'
+    await prisma.prv_History.update({
+      where: { id: historyRecord.id },
+      data: { status: 'approved', transactionDate: new Date() },
+    });
+
+    res.status(200).json({ message: 'Redemption approved successfully.' });
+  } catch (error) {
+    console.error('Error approving redemption:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+export const approveQRCode = async (req, res) => {
+  const { qrCodeId } = req.body;
+
+  if (!qrCodeId) {
+    return res.status(400).json({ error: "Missing QR Code ID." });
+  }
+
+  try {
+    console.log("Approving QR Code ID:", qrCodeId);
+
+    const result = await prisma.$transaction(async (prisma) => {
+      const qrCodeEntry = await prisma.prv_QRCode.findUnique({
+        where: { id: parseInt(qrCodeId, 10) },
+      });
+
+      if (!qrCodeEntry) {
+        throw new Error("QR Code not found.");
+      }
+
+      // ตรวจสอบสถานะ QR Code
+      if (qrCodeEntry.status !== "active") {
+        // หากถูกสแกนไปแล้วเมื่อเร็วๆ นี้ (เช่น ภายใน 10 วินาที)
+        const now = new Date();
+        if (qrCodeEntry.lastScannedAt && now - new Date(qrCodeEntry.lastScannedAt) < 10000) {
+          return { alreadyScanned: true, message: "QR Code has already been used or is not active." };
+        }
+
+        // อัปเดต lastScannedAt เพื่อบันทึกการสแกนซ้ำ
+        await prisma.prv_QRCode.update({
+          where: { id: parseInt(qrCodeId, 10) },
+          data: { lastScannedAt: now },
+        });
+
+        throw new Error("QR Code has already been used or is not active.");
+      }
+
+      // ตรวจสอบวันหมดอายุ
+      if (new Date() > new Date(qrCodeEntry.expiresAt)) {
+        throw new Error("QR Code has expired.");
+      }
+
+      // Parse QR Code data
+      let qrCodeData;
+      try {
+        qrCodeData = JSON.parse(qrCodeEntry.code);
+      } catch (err) {
+        throw new Error("QR Code data is invalid or corrupted.");
+      }
+
+      // Fetch user privilege
+      const privilege = await prisma.prv_Privilege.findFirst({
+        where: {
+          user: { lineUserId: qrCodeData.lineUserId },
+        },
+      });
+
+      if (!privilege) {
+        throw new Error("Privilege not found for user.");
+      }
+
+      if (privilege.currentPoint < qrCodeData.point) {
+        throw new Error("Insufficient points.");
+      }
+
+      const updatedPrivilege = await prisma.prv_Privilege.update({
+        where: { id: privilege.id },
+        data: { currentPoint: privilege.currentPoint - qrCodeData.point },
+      });
+
+      const productStock = await prisma.productStock.findFirst({
+        where: {
+          productId: qrCodeData.productId,
+          colorId: qrCodeData.color,
+          sizeId: qrCodeData.size,
+        },
+      });
+
+      if (!productStock || productStock.quantity <= 0) {
+        throw new Error("Product out of stock.");
+      }
+
+      // อัปเดตสถานะ QR Code
+      const updatedQRCode = await prisma.prv_QRCode.updateMany({
+        where: {
+          id: parseInt(qrCodeId, 10),
+          status: "active",
+        },
+        data: { status: "used", lastScannedAt: new Date() },
+      });
+
+      if (updatedQRCode.count === 0) {
+        throw new Error("QR Code has already been used or modified.");
+      }
+
+      // อัปเดตจำนวนสินค้า
+      const updatedStock = await prisma.productStock.update({
+        where: { id: productStock.id },
+        data: { quantity: productStock.quantity - 1 },
+      });
+
+      await prisma.prv_History.updateMany({
+        where: { qrCodeId: parseInt(qrCodeId, 10), status: "pending" },
+        data: { status: "approved", transactionDate: new Date() },
+      });
+
+      return {
+        updatedStock: updatedStock.quantity,
+        remainingPoints: updatedPrivilege.currentPoint,
+      };
+    });
+
+    if (result?.alreadyScanned) {
+      return res.status(200).json({ message: result.message });
+    }
+
+    res.status(200).json({
+      message: "QR Code approved successfully!",
+      updatedStock: result.updatedStock,
+      remainingPoints: result.remainingPoints,
+    });
+  } catch (error) {
+    console.error("Error approving QR Code:", error);
+
+    if (error.message.includes("QR Code not found")) {
+      return res.status(404).json({ error: "QR Code not found." });
+    }
+    if (error.message.includes("already been used")) {
+      return res.status(400).json({ error: "QR Code has already been used or is not active." });
+    }
+    if (error.message.includes("QR Code has expired")) {
+      return res.status(400).json({ error: "QR Code has expired." });
+    }
+    if (error.message.includes("Privilege not found for user")) {
+      return res.status(404).json({ error: "Privilege not found for user." });
+    }
+    if (error.message.includes("Insufficient points")) {
+      return res.status(400).json({ error: "Insufficient points." });
+    }
+    if (error.message.includes("Product out of stock")) {
+      return res.status(400).json({ error: "Product out of stock." });
+    }
+
+    return res.status(500).json({ error: "Failed to approve QR Code." });
+  }
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   
   
   

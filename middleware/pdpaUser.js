@@ -36,11 +36,11 @@ export const pdpaAccess = async (req, res) => {
       const pdpa = await prisma.prv_Pdpa.upsert({
           where: { userId: user.id }, // Find by userId
           update: {
-              checkbox1,
+            checkbox1: true, // ตั้งค่าเป็น true เสมอ
           },
           create: {
               userId: user.id,
-              checkbox1,
+              checkbox1: true, // ตั้งค่าเป็น true เสมอ
           },
       });
       console.log("Consent saved successfully:", pdpa); // Log success

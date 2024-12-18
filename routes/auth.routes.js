@@ -25,7 +25,8 @@ import { getUserPrivilege,
          getProducts,
          redeemProduct,
          getRedeemedHistory,
-         getallreward 
+         getallreward,
+         generateQRCodeProduct
 } from '../middleware/privilegeUser.js'
 
 import {  adminLogin,
@@ -37,12 +38,17 @@ import {  adminLogin,
           deleteProduct,
           showExpense,
           deleteExpense,
-          getAllProducts
+          getAllProducts,
+          approveRedemption,
+          approveQRCode
+      
 
 } from '../middleware/approveUser.js'
 import { body, validationResult } from 'express-validator';
 import thaibulksmsApi from 'thaibulksms-api';
 import { PrismaClient } from '@prisma/client';
+
+
 
 const prisma = new PrismaClient();
 
@@ -129,14 +135,6 @@ AuthRoutes.post('/verify-otp', body('token').notEmpty(), body('otp_code').notEmp
 })
 AuthRoutes.post('/update-status-after-otp', updateStatusAfterOtp);
 
-
-
-
-
-
-
-
-
 // verify
 AuthRoutes.post("/requestotp-e", requestOtp);  // requestotp email
 AuthRoutes.post("/verifyotp-e",  verifyOtp);   // verify otpemail
@@ -159,11 +157,11 @@ AuthRoutes.get('/get-products', getProducts);  // show product user
 AuthRoutes.post('/redeem-product', redeemProduct);  // redeem product user
 AuthRoutes.get('/redeem-history-user',getRedeemedHistory ); // redeem history user
 AuthRoutes.get('/get-all-reward', getallreward ); // get all reward user
-
+AuthRoutes.post('/generateqrcode-product',generateQRCodeProduct); // generate QR Code product
 // admin approve 
 AuthRoutes.post('/admin-login', adminLogin); // admin login
 AuthRoutes.get('/get-all-user', allUsers);  // add product
-AuthRoutes.post('/purchase-license', purchaseLicense);  // purchase license
+AuthRoutes.post('/purchase-license/:userId', purchaseLicense);  // purchase license
 AuthRoutes.get('/show-expense/:userId', showExpense);  // show expense user 1,2,3,4,5,6
 AuthRoutes.delete('/delete-expense/:expenseId', deleteExpense);
 AuthRoutes.post('/add-expense/:userId', addExpense);  // add expense
@@ -171,4 +169,7 @@ AuthRoutes.delete('/delete-expense-with-transaction', deleteExpenseWithTransacti
 AuthRoutes.get('/get-all-product', getAllProducts); // get all
 AuthRoutes.post('/add-products', addProducts);  // add product
 AuthRoutes.delete('/delete-product/:id', deleteProduct);  // delete product
+AuthRoutes.post('/approve-redemption', approveRedemption); //   approve redemption ด้วย  postman
+AuthRoutes.post('/approve-qrcode',approveQRCode) // จากการถ่ายจากกล้อง
+
 export default AuthRoutes;

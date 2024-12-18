@@ -30,7 +30,7 @@ export const loginLine = async (req, res ) => {
 };
 
 export const addOrUpdateUser = async (req, res) => {
-  const { firstname, lastname, mobile, birthday, email, lineUserId } = req.body;
+  const { firstname, lastname, mobile, birthday, email, lineUserId , nationality } = req.body;
 
   try {
     // Check if a user with the provided lineUserId exists
@@ -45,6 +45,7 @@ export const addOrUpdateUser = async (req, res) => {
         mobile,
         birthday: birthday ? new Date(birthday) : null,
         email,
+        nationality, 
         lineUserId,
       });
 
@@ -57,6 +58,7 @@ export const addOrUpdateUser = async (req, res) => {
           mobile,
           birthday: birthday ? new Date(birthday) : null,
           email,
+          nationality, 
         },
       });
 
@@ -75,6 +77,7 @@ export const addOrUpdateUser = async (req, res) => {
         mobile,
         birthday: birthday ? new Date(birthday) : null,
         email,
+        nationality, 
         lineUserId,
       });
 
@@ -102,6 +105,7 @@ export const addOrUpdateUser = async (req, res) => {
           mobile,
           birthday: birthday ? new Date(birthday) : null,
           email,
+          nationality, 
           lineUserId,
           isVerified: false, // Default to false, waiting for verification
         },
@@ -142,6 +146,7 @@ export const getUser = async (req, res) => {
           mobile: true,
           birthday: true,
           email: true,
+          nationality : true,
           pdpa: true,
           otps: true, // ดึงข้อมูล OTP ที่เกี่ยวข้อง
         },

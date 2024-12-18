@@ -1,106 +1,149 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL") //  DATABASE_URL ใช้เชื่อม local and external by render
+  url      = env("DATABASE_URL")
 }
 
 model Prv_Users {
-  id          Int         @id @default(autoincrement())
-  firstname   String?
-  lastname    String?
-  mobile      String?     @unique
-  birthday    DateTime?
-  email       String?     @unique
-  isVerified  Boolean?     @default(false) // เก็บสถานะการยืนยัน OTP
-  lineUserId   String?     @unique // เพิ่มฟิลด์นี้เพื่อเก็บ LINE User ID
-  pdpa        Prv_Pdpa?   // ความสัมพันธ์ 1:1 ไปยัง Prv_Pdpa
-  otps        Prv_Otp[]   // ความสัมพันธ์ 1:N ไปยังตาราง Otp
-  userStatus  Prv_Status? // ความสัมพันธ์ 1:1 กับ Prv_Status
-
-    // ความสัมพันธ์กับ PRV_PRIVILEGE (1:N)
-  privileges     Prv_Privilege[]    // ผู้ใช้คนหนึ่งอาจมีหลาย privilege (เช่นโปรแกรมสะสมแต้มต่างกัน)
-
-  // ความสัมพันธ์กับ PRV_TOTAL_EXPENSE (1:N)
-  totalExpenses  Prv_Total_Expense[] // ผู้ใช้คนหนึ่งอาจมีการใช้จ่ายหลายรายการ
-
-  // ความสัมพันธ์กับ PRV_HISTORY (1:N)
-  history        Prv_History[]      // ผู้ใช้สามารถแลกสินค้าได้หลายครั้ง
+  id            Int                 @id @default(autoincrement())
+  firstname     String?
+  lastname      String?
+  mobile        String?             @unique
+  birthday      DateTime?
+  email         String?             @unique
+  isVerified    Boolean?            @default(false)
+  lineUserId    String?             @unique
+  nationality   String?
+  userQrCode    String?
+  history       Prv_History[]
+  otps          Prv_Otp?
+  pdpa          Prv_Pdpa?
+  privileges    Prv_Privilege[]
+  userStatus    Prv_Status?
+  totalExpenses Prv_Total_Expense[]
 }
 
-model Prv_Pdpa{
-  id Int @id @default(autoincrement())
-  checkbox1 Boolean
-  createdAt DateTime @default(now())
-  userId    Int       @unique
-
-  user      Prv_Users @relation(fields: [userId], references: [id]) // ความสัมพันธ์กลับไปยัง Prv_Users
-
-}
-
-model Prv_Otp{
+model Prv_Pdpa {
   id        Int       @id @default(autoincrement())
-  code      String    // รหัส OTP
-  expiresAt DateTime  // เวลา OTP หมดอายุ
-  userId    Int?   @unique    // ความสัมพันธ์กับ Prv_Users
+  checkbox1 Boolean
+  createdAt DateTime  @default(now())
+  userId    Int       @unique
+  user      Prv_Users @relation(fields: [userId], references: [id])
+}
 
-  user      Prv_Users? @relation(fields: [userId], references: [id]) // เชื่อมกับ Prv_Users
-
+model Prv_Otp {
+  id        Int        @id @default(autoincrement())
+  code      String
+  expiresAt DateTime
+  userId    Int?       @unique
+  user      Prv_Users? @relation(fields: [userId], references: [id])
 }
 
 model Prv_Status {
   id     Int       @id @default(autoincrement())
-  userId Int       @unique // เชื่อมโยงกับ Prv_Users
-  status Int       // สถานะของผู้ใช้
-  user   Prv_Users @relation(fields: [userId], references: [id]) // เชื่อมกับ Prv_Users
+  userId Int       @unique
+  status Int
+  user   Prv_Users @relation(fields: [userId], references: [id])
 }
+
 model Prv_Privilege {
-  id                Int           @id @default(autoincrement())
-  user              Prv_Users     @relation(fields: [userId], references: [id])
-  userId            Int
-  prvExpiredDate    DateTime?
-  prvLicenseId      Int?
-  prvType           String        // เช่น S, G, P,  D
-  currentAmount     Float
-  totalAmountPerYear Float
-  currentPoint      Int
+  id                 Int       @id @default(autoincrement())
+  userId             Int
+  prvExpiredDate     DateTime? // Expiration date of the Privilege license
+  prvType            String    // Current type of Privilege
+  currentAmount      Float     // Current amount towards earning points
+  totalAmountPerYear Float     // Total amount spent in the current year
+  currentPoint       Int       // Current point balance
+  prvLicenseId       Int?      @unique // Unique license ID, null if not purchased
+  isPurchased        Boolean   @default(false) // Indicates if a Privilege license has been purchased
+  registeredDate     DateTime? @default(now()) // Date the Privilege was registered
+  user               Prv_Users @relation(fields: [userId], references: [id]) // Relation to user
 }
+
 model Prv_Total_Expense {
-  id               Int           @id @default(autoincrement())
-  user             Prv_Users     @relation(fields: [userId], references: [id])
-  userId           Int
-  transactionDate  DateTime
-  expenseAmount    Float
-  prvType          String        // เช่น S, G, P, M
-  expensePoint     Int
+  id              Int       @id @default(autoincrement())
+  userId          Int
+  transactionDate DateTime
+  expenseAmount   Float
+  prvType         String
+  expensePoint    Int
+  user            Prv_Users @relation(fields: [userId], references: [id])
 }
-model Prv_Product {
+
+model Prv_Admin {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  role      String
+}
+
+model Product {
   id           Int            @id @default(autoincrement())
-  productName  String
-  point        Int            // คะแนนที่ใช้ในการแลก
-  histories    Prv_History[]  // ความสัมพันธ์ 1:N กับ PRV_HISTORY
+  name         String        
+  description  String
+  point        Int
+  imagepath    String?
+  ProductStock ProductStock[]
+}
+
+model ProductType {
+  id           Int            @id @default(autoincrement())
+  type         String         @unique
+  description  String
+  ProductStock ProductStock[] @relation(name: "ColorRelation")
+  SizeStock    ProductStock[] @relation(name: "SizeRelation")
+}
+
+model ProductStock {
+  id          Int           @id @default(autoincrement())
+  itemCode    String
+  name        String
+  description String
+  colorId     Int
+  sizeId      Int
+  barcode     String // Barcode ของสินค้า
+  stockQrCode String? // QR Code ที่สร้างจาก Barcode
+  productId   Int
+  quantity    Int      
+  Product     Product       @relation(fields: [productId], references: [id])
+  color       ProductType   @relation(fields: [colorId], references: [id], name: "ColorRelation")
+  size        ProductType   @relation(fields: [sizeId], references: [id], name: "SizeRelation")
+  histories   Prv_History[] @relation // ความสัมพันธ์ย้อนกลับไปยัง Prv_History
 }
 
 model Prv_History {
-  id              Int           @id @default(autoincrement())
-  transactionDate DateTime      // วันที่แลกสินค้า
-  user            Prv_Users     @relation(fields: [userId], references: [id])
-  userId          Int
-  product         Prv_Product   @relation(fields: [productId], references: [id])
-  productId       Int
+  id              Int          @id @default(autoincrement())
+  transactionDate DateTime // วันที่แลกสินค้า
+  userId          Int // ผู้ใช้ที่แลกสินค้า
+  productId       Int // ลิงก์ไปยังสินค้า
+  productStockId  Int // ลิงก์ไปยัง ProductStock
+  productStock    ProductStock @relation(fields: [productStockId], references: [id]) // ลิงก์ไปยัง ProductStock
+  options         Json? // เก็บข้อมูลตัวเลือก (สี, ขนาด) ในรูปแบบ JSON
+  qrCodeId        Int?         @unique // ลิงก์ไปยัง QR Code (ต้องมี @unique สำหรับ One-to-One)
+  qrCode          Prv_QRCode?  @relation(fields: [qrCodeId], references: [id])
+  user            Prv_Users    @relation(fields: [userId], references: [id])
+  status          String       @default("pending") // สถานะการแลก เช่น "pending", "approved", "expired"
 }
-model Prv_Admin {
-  id        Int      @id @default(autoincrement())
-  username  String   @unique // ชื่อผู้ใช้งาน (ไม่ซ้ำกัน)
-  password  String   // รหัสผ่าน (ควรเก็บเป็น hashed password)
-  createdAt DateTime @default(now())
-  role      String   // บทบาท เช่น "admin" หรือ "superadmin" (ถ้าต้องการรองรับหลายระดับ)
+
+enum QRCodeStatus {
+  active
+  used
+  expired
 }
+
+model Prv_QRCode {
+  id          Int          @id @default(autoincrement())
+  code        String       // ข้อมูลใน QR Code
+  imageBase64 String?      // เก็บ Base64 ของภาพ QR Code
+  type        String       // ประเภท QR Code เช่น "user", "stock"
+  status      QRCodeStatus @default(active) // สถานะ QR Code เช่น "active", "used"
+  createdAt   DateTime     @default(now())  // วันที่สร้าง QR Code
+  expiresAt   DateTime     // วันและเวลาที่ QR Code หมดอายุ
+  lastScannedAt DateTime?
+  history     Prv_History? @relation        // ความสัมพันธ์ย้อนกลับไปยัง Prv_History
+}
+

@@ -18,6 +18,7 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // cors
 app.use(cors());
 
+
 //api way
 app.use('/user', AuthRoutes)
 // listen on port
